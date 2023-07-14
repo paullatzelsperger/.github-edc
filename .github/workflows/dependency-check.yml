@@ -1,21 +1,18 @@
 name: 'Dependency Review'
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
-  Check-Allowed-Licenses:
+  Review-Allowed-Licenses:
     runs-on: ubuntu-latest
     continue-on-error: false
+    if: ${{ github.event_name == 'pull_request' }}
     steps:
-      - name: 'Checkout Repository'
-        uses: actions/checkout@v3
-      - name: 'Dependency Review'
+      - uses: actions/checkout@v3
+      - name: 'Check Allowed Licenses'
         uses: actions/dependency-review-action@v3
         with:
           fail-on-severity: critical
@@ -29,7 +26,7 @@ jobs:
             Unicode-DFS-2015, Unicode-DFS-2016, Unicode-TOU, UPL-1.0, W3C-20150513, W3C-19980720, W3C,
             WTFPL, X11, Zlib, ZPL-2.1
 
-  Dash-Dependency-Check:
+  Dash-Verify-Licenses:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -39,25 +36,29 @@ jobs:
           curl -L https://repo.eclipse.org/service/local/artifact/maven/redirect\?r\=dash-licenses\&g\=org.eclipse.dash\&a\=org.eclipse.dash.licenses\&v\=LATEST --output dash.jar
       - name: Regenerate DEPENDENCIES
         run: |
-          if [ -f DEPENDENCIES ]; then
-            # dash returns a nonzero exit code if there are libs that need review. the "|| true" avoids that
-            ./gradlew allDependencies | grep -Poh "(?<=\s)[\w.-]+:[\w.-]+:[^:\s\[\]]+" | sort | uniq | java -jar dash.jar - -summary DEPENDENCIES-gen || true
-  
-            # log warning if restricted deps are found
-            grep -E 'restricted' DEPENDENCIES | if test $(wc -l) -gt 0; then 
-              echo "::warning file=DEPENDENCIES,title=Restricted Dependencies found::Some dependencies are marked 'restricted' - please review them" 
-            fi
-  
-            # log error and fail job if rejected deps are found
-            grep -E 'rejected' DEPENDENCIES | if test $(wc -l) -gt 0; then
-              echo "::error file=DEPENDENCIES,title=Rejected Dependencies found::Some dependencies are marked 'rejected', they cannot be used"
-              exit 1
-            fi
-          else
-            echo "::warning file=DEPENDENCIES,title=DEPENDENCIES file missing::The DEPENDENCIES file was missing, the checks did not run."
+          # dash returns a nonzero exit code if there are libs that need review. the "|| true" avoids that
+          ./gradlew allDependencies | grep -Poh "(?<=\s)[\w.-]+:[\w.-]+:[^:\s\[\]]+" | sort | uniq | java -jar dash.jar - -summary DEPENDENCIES-gen || true
+
+          # log warning if restricted deps are found
+          grep -E 'restricted' DEPENDENCIES | if test $(wc -l) -gt 0; then 
+            echo "::warning file=DEPENDENCIES,title=Restricted Dependencies found::Some dependencies are marked 'restricted' - please review them" 
+          fi
+
+          # log error and fail job if rejected deps are found
+          grep -E 'rejected' DEPENDENCIES | if test $(wc -l) -gt 0; then
+            echo "::error file=DEPENDENCIES,title=Rejected Dependencies found::Some dependencies are marked 'rejected', they cannot be used"
+            exit 1
           fi
       - name: Check for differences
         run: |
-          if [ -f DEPENDENCIES ]; then
+          if diff DEPENDENCIES DEPENDENCIES-gen ; then
+            echo "DEPENDENCIES up-do-date"
+          else
             diff DEPENDENCIES DEPENDENCIES-gen
+            echo "------------------------------------------------------------"
+            echo "Please copy the following content back to DEPENDENCIES" 
+            cat DEPENDENCIES-gen
+            echo "end of content"
+            echo "::error file=DEPENDENCIES,title=Dependencies outdated::The DEPENDENCIES file was outdated and must be regenerated. Check the output of this job for more information"
+            exit 1
           fi
