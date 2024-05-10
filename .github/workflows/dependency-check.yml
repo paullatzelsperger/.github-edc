@@ -6,7 +6,7 @@ jobs:
   Review-Allowed-Licenses:
     runs-on: ubuntu-latest
     continue-on-error: false
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
     steps:
       - uses: actions/checkout@v4
       - name: 'Check Allowed Licenses'
@@ -29,6 +29,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.ORG_GITHUB_BOT_TOKEN }}
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref || github.head_ref || github.ref_name }}
       - uses: eclipse-edc/.github/.github/actions/setup-build@main
       - name: Download latest Eclipse Dash
         run: |
@@ -58,7 +60,6 @@ jobs:
       - name: choose post behavior
         run: |
           BRANCH_NAME=${{ github.head_ref || github.ref_name }}
-          echo "BRANCH_NAME=${BRANCH_NAME}" >> $GITHUB_ENV
           if [[ "$BRANCH_NAME" == "dependabot/gradle/"* ]]; then
             echo "BEHAVIOR=COMMIT" >> $GITHUB_ENV
           else
@@ -83,11 +84,15 @@ jobs:
       - name: Update DEPENDENCIES on dependabot branches
         if: ${{ env.BEHAVIOR == 'COMMIT' }}
         run: |
-          mv DEPENDENCIES-gen DEPENDENCIES
-          
-          git config user.name "eclipse-edc-bot"
-          git config user.email "edc-bot@eclipse.org"
-          
-          git add DEPENDENCIES
-          git commit --message "update dependencies [skip dependabot]"
-          git push origin ${{ env.BRANCH_NAME }}
+          if diff DEPENDENCIES DEPENDENCIES-gen ; then
+            echo "DEPENDENCIES is already updated, no need to commit"
+          else
+            mv DEPENDENCIES-gen DEPENDENCIES
+            
+            git config user.name "eclipse-edc-bot"
+            git config user.email "edc-bot@eclipse.org"
+            
+            git add DEPENDENCIES
+            git commit --message "update dependencies [skip dependabot]"
+            git push
+          fi
