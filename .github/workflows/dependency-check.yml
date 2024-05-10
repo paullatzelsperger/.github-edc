@@ -27,10 +27,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.ORG_GITHUB_BOT_TOKEN }}
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref || github.head_ref || github.ref_name }}
       - uses: eclipse-edc/.github/.github/actions/setup-build@main
       - name: Download latest Eclipse Dash
         run: |
@@ -57,17 +53,7 @@ jobs:
             exit 1
           fi
 
-      - name: choose post behavior
-        run: |
-          BRANCH_NAME=${{ github.head_ref || github.ref_name }}
-          if [[ "$BRANCH_NAME" == "dependabot/gradle/"* ]]; then
-            echo "BEHAVIOR=COMMIT" >> $GITHUB_ENV
-          else
-            echo "BEHAVIOR=CHECK" >> $GITHUB_ENV
-          fi
-
       - name: Check for differences
-        if: ${{ env.BEHAVIOR == 'CHECK' }}
         run: |
           if diff DEPENDENCIES DEPENDENCIES-gen ; then
             echo "DEPENDENCIES up-do-date"
@@ -79,20 +65,4 @@ jobs:
             echo "=== end of content ==="
             echo "::error file=DEPENDENCIES,title=Dependencies outdated::The DEPENDENCIES file was outdated and must be regenerated. Check the output of this job for more information"
             exit 1
-          fi
-
-      - name: Update DEPENDENCIES on dependabot branches
-        if: ${{ env.BEHAVIOR == 'COMMIT' }}
-        run: |
-          if diff DEPENDENCIES DEPENDENCIES-gen ; then
-            echo "DEPENDENCIES is already updated, no need to commit"
-          else
-            mv DEPENDENCIES-gen DEPENDENCIES
-            
-            git config user.name "eclipse-edc-bot"
-            git config user.email "edc-bot@eclipse.org"
-            
-            git add DEPENDENCIES
-            git commit --message "update dependencies [skip dependabot]"
-            git push
           fi
