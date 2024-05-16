@@ -1,0 +1,95 @@
+# This workflow is intended to be called by the core components release workflow and takes care of:
+# - reading the version
+# - building and testing the code base calling the "verify.yaml" job
+# - publishing the binary artifacts to OSSRH Staging or MavenCentral
+# - creating a GitHub release if it's not a SNAPSHOT build
+
+---
+name: "Build and Publish Technology Repository"
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+        description: "The SemVer string of this technology component"
+      component_release_workflow_file:
+        required: true
+        description: "Name of the workflow file that does the component release"
+        type: string
+      component_test_workflow_file:
+        required: false
+        description: "Name of the workflow file that runs all tests"
+        type: string
+        default: "verify.yaml"
+
+env:
+  INPUT_VERSION: ${{ github.event.inputs.version || inputs.version }}
+  REPO: ${{ github.event.repository.name }}
+  OWNER: ${{ github.repository_owner }}
+  TESTFILE: ${{ github.event.inputs.component_test_workflow_file || inputs.component_test_workflow_file }}
+
+#concurrency:
+#  group: ${{ github.workflow }}-${{ github.ref }}
+#  cancel-in-progress: true
+
+jobs:
+  Secrets-Presence:
+    name: "Check for required credentials"
+    runs-on: ubuntu-latest
+    outputs:
+      HAS_GH_PAT: ${{ steps.secrets-presence.outputs.HAS_GH_PAT }}
+      HAS_WEBHOOK: ${{ steps.secrets-presence.outputs.HAS_WEBHOOK }}
+    steps:
+      - name: Check whether secrets exist
+        id: secrets-presence
+        run: |
+          [ ! -z "${{ secrets.ORG_GITHUB_BOT_USER }}" ] &&
+          [ ! -z "${{ secrets.ORG_GITHUB_BOT_TOKEN }}" ] && echo "HAS_GH_PAT=true" >> $GITHUB_OUTPUT
+          [ ! -z "${{ secrets.DISCORD_WEBHOOK_GITHUB }}" ] && echo "HAS_WEBHOOK=true" >> $GITHUB_OUTPUT
+          exit 0
+
+  Determine-Version:
+    # this looks to be necessary because some constructs as "with" are not able to get values from env
+    runs-on: ubuntu-latest
+    needs: [Secrets-Presence]
+    outputs:
+      VERSION: ${{ steps.get-version.outputs.VERSION }}
+    steps:
+      - name: "Extract version"
+        id: get-version
+        run: echo "VERSION=${{ env.INPUT_VERSION }}" >> "$GITHUB_OUTPUT"
+
+  Prepare-Release:
+    name: "Prepare code base for release"
+    needs: [ Determine-Version ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Log some env vars"
+        run: |
+          echo "version: $INPUT_VERSION"
+          echo "repo: $REPO"
+          echo "owner: $OWNER"
+          echo "file: $TESTFILE"
+      - name: "Update version"
+        run: |
+          newVersion=$INPUT_VERSION
+          oldVersion=$(grep "version" gradle.properties  | awk -F= '{print $2}')
+          echo "Updating version information from $oldVersion -> $newVersion"
+          sed -i "s/$oldVersion/newVersion/g" gradle.properties gradle/libs.versions.toml settings.gradle.kts
+
+  Run-Tests:
+    needs: [Prepare-Release]
+    runs-on: ubuntu-latest
+    #    uses: ./.github/workflows/verify.yaml
+    steps:
+      - name: "Download script"
+        run: |
+          wget https://raw.githubusercontent.com/eclipse-edc/Release/main/scripts/github_action.sh
+          chmod +x github_action.sh
+      - name: "Run test script"
+        run: |
+          echo "Execute $TESTFILE in $OWNER/$REPO"
+          ./github_action.sh "$OWNER" "$REPO" "$TESTFILE" "" "${{ secrets.ORG_GITHUB_BOT_USER }}" "${{ secrets.ORG_GITHUB_BOT_TOKEN }}"
